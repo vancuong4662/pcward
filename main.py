@@ -101,13 +101,19 @@ class SystemInfoApp(QMainWindow):
     def create_tab(self, text):
         widget = QWidget()
         layout = QVBoxLayout()
+        # Container cho label
+        container = QWidget()
+        vbox = QVBoxLayout()
         label = QLabel(text)
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         label.setStyleSheet("font-size: 13px;")
         label.setWordWrap(True)
+        vbox.addWidget(label, alignment=Qt.AlignmentFlag.AlignTop)
+        vbox.addStretch(1)
+        container.setLayout(vbox)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setWidget(label)
+        scroll.setWidget(container)
         layout.addWidget(scroll)
         widget.setLayout(layout)
         return widget
