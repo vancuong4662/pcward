@@ -5,6 +5,7 @@ import GPUtil
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QLabel, QScrollArea
 )
+from PyQt6.QtGui import QFontDatabase, QFont
 from PyQt6.QtCore import Qt
 
 def get_size(bytes, suffix="B"):
@@ -82,7 +83,6 @@ def get_gpu_info():
         lines.append("")
     return "\n".join(lines)
 
-
 class SystemInfoApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -112,8 +112,21 @@ class SystemInfoApp(QMainWindow):
         widget.setLayout(layout)
         return widget
 
+def setup_custom_font(app, ttf_path="font-default.ttf", font_size=14):
+    """
+    Nạp font .ttf và đặt làm font mặc định cho app.
+    """
+    font_id = QFontDatabase.addApplicationFont(ttf_path)
+    if font_id != -1:
+        font_family = QFontDatabase.applicationFontFamilies(font_id)[0]
+        app.setFont(QFont(font_family, font_size))
+    else:
+        print(f"Không thể nạp font từ {ttf_path}, sẽ dùng font mặc định.")
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    # Đặt font tùy chỉnh ở đây. Đổi tên file font nếu cần.
+    setup_custom_font(app, ttf_path="font-pro.ttf", font_size=12)
     window = SystemInfoApp()
     window.show()
     sys.exit(app.exec())
