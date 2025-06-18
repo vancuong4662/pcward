@@ -2,11 +2,13 @@ import sys
 import psutil
 import platform
 import GPUtil
+import os
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QLabel, QScrollArea
+    QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout, QLabel, QScrollArea,
+    QTableWidget, QTableWidgetItem, QHeaderView, QPushButton, QHBoxLayout, QLineEdit, QMessageBox
 )
-from PyQt6.QtGui import QFontDatabase, QFont
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFontDatabase, QFont
 
 def get_size(bytes, suffix="B"):
     factor = 1024
@@ -83,11 +85,151 @@ def get_gpu_info():
         lines.append("")
     return "\n".join(lines)
 
+class TaskListTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.init_ui()
+
+    def init_ui(self):
+        main_layout = QVBoxLayout()
+        # Filter box
+        filter_layout = QHBoxLayout()
+        self.filter_edit = QLineEdit()
+        self.filter_edit.setPlaceholderText("Lọc theo tên tiến trình hoặc PID...")
+        self.filter_edit.textChanged.connect(self.refresh_table)
+        filter_layout.addWidget(self.filter_edit)
+        main_layout.addLayout(filter_layout)
+
+        # Table
+        self.table = QTableWidget()
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels(["Task Name", "PID", "SES/CON", "Memory (MB)"])
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+
+        # Co giãn cột: 40-10-20-30
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        # Tỉ lệ stretch
+        header.setStretchLastSection(False)
+        header.resizeSection(0, 400)
+        header.resizeSection(1, 100)
+        header.resizeSection(2, 200)
+        header.resizeSection(3, 300)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        self.set_column_widths()
+
+        main_layout.addWidget(self.table)
+
+        # End Task button
+        btn_layout = QHBoxLayout()
+        self.end_task_btn = QPushButton("End Task")
+        self.end_task_btn.clicked.connect(self.end_task)
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.end_task_btn)
+        main_layout.addLayout(btn_layout)
+
+        self.setLayout(main_layout)
+        self.refresh_table()
+
+    def set_column_widths(self):
+        # Set width by % of total width
+        total = 40 + 10 + 20 + 30
+        self.table.setColumnWidth(0, int(self.table.width() * 40 / 100))
+        self.table.setColumnWidth(1, int(self.table.width() * 10 / 100))
+        self.table.setColumnWidth(2, int(self.table.width() * 20 / 100))
+        self.table.setColumnWidth(3, int(self.table.width() * 30 / 100))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.set_column_widths()
+
+    def get_processes(self):
+        processes = []
+        is_windows = os.name == "nt"
+        for proc in psutil.process_iter(['pid', 'name', 'username', 'memory_info']):
+            try:
+                info = proc.info
+                # Windows: Dùng session_id, các HĐH khác: luôn SES
+                if is_windows:
+                    try:
+                        sesid = proc.session_id()
+                        session = "CON" if sesid == 1 else "SES"
+                    except Exception:
+                        session = "SES"
+                else:
+                    session = "SES"
+                mem = info['memory_info'].rss / (1024 * 1024)  # MB
+                processes.append([
+                    info['name'],
+                    str(info['pid']),
+                    session,
+                    f"{mem:.1f}"
+                ])
+            except Exception:
+                continue
+        return processes
+
+    def refresh_table(self):
+        filter_text = self.filter_edit.text().lower().strip()
+        processes = self.get_processes()
+        filtered = []
+        for row in processes:
+            if filter_text == '':
+                filtered.append(row)
+            else:
+                # Lọc theo tên hoặc PID
+                if filter_text in row[0].lower() or filter_text in row[1]:
+                    filtered.append(row)
+        self.table.setRowCount(len(filtered))
+        for i, row_data in enumerate(filtered):
+            for j, value in enumerate(row_data):
+                item = QTableWidgetItem(value)
+                item.setFlags(item.flags() ^ Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(i, j, item)
+
+    def end_task(self):
+        selected = self.table.currentRow()
+        if selected < 0:
+            QMessageBox.warning(self, "Chưa chọn tiến trình", "Vui lòng chọn một tiến trình trước khi tắt.")
+            return
+        pid_item = self.table.item(selected, 1)
+        name_item = self.table.item(selected, 0)
+        pid = int(pid_item.text())
+        name = name_item.text()
+        reply = QMessageBox.question(
+            self, "Xác nhận", f"Bạn có chắc muốn tắt tiến trình '{name}' (PID: {pid}) không?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                p = psutil.Process(pid)
+                p.terminate()
+                p.wait(timeout=3)
+                QMessageBox.information(self, "Thành công", f"Đã tắt tiến trình '{name}' (PID: {pid})")
+            except Exception as e:
+                QMessageBox.critical(self, "Lỗi", f"Không thể tắt tiến trình: {e}")
+            self.refresh_table()
+
 class SystemInfoApp(QMainWindow):
     def __init__(self):
         super().__init__()
+        # Load custom font
+        font_path = os.path.join(os.path.dirname(__file__), "font-pro.ttf")
+        if os.path.exists(font_path):
+            font_id = QFontDatabase.addApplicationFont(font_path)
+            if font_id != -1:
+                family = QFontDatabase.applicationFontFamilies(font_id)[0]
+                QApplication.setFont(QFont(family))
+
         self.setWindowTitle("Thông số hệ thống máy tính")
-        self.setGeometry(100, 100, 500, 400)
+        self.setGeometry(100, 100, 700, 500)
 
         tabs = QTabWidget()
         tabs.addTab(self.create_tab(get_system_info()), "Hệ thống")
@@ -95,44 +237,27 @@ class SystemInfoApp(QMainWindow):
         tabs.addTab(self.create_tab(get_ram_info()), "RAM")
         tabs.addTab(self.create_tab(get_disk_info()), "Ổ đĩa")
         tabs.addTab(self.create_tab(get_gpu_info()), "GPU")
+        tabs.addTab(TaskListTab(), "Task List")
 
         self.setCentralWidget(tabs)
 
     def create_tab(self, text):
         widget = QWidget()
         layout = QVBoxLayout()
-        # Container cho label
-        container = QWidget()
-        vbox = QVBoxLayout()
         label = QLabel(text)
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        label.setStyleSheet("font-size: 13px;")
+        label.setStyleSheet("font-size: 13px; padding-left: 6px;")  # Thêm padding trái
         label.setWordWrap(True)
-        vbox.addWidget(label, alignment=Qt.AlignmentFlag.AlignTop)
-        vbox.addStretch(1)
-        container.setLayout(vbox)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
-        scroll.setWidget(container)
+        scroll.setWidget(label)
         layout.addWidget(scroll)
+        layout.addStretch(1)
         widget.setLayout(layout)
         return widget
 
-def setup_custom_font(app, ttf_path="font-default.ttf", font_size=14):
-    """
-    Nạp font .ttf và đặt làm font mặc định cho app.
-    """
-    font_id = QFontDatabase.addApplicationFont(ttf_path)
-    if font_id != -1:
-        font_family = QFontDatabase.applicationFontFamilies(font_id)[0]
-        app.setFont(QFont(font_family, font_size))
-    else:
-        print(f"Không thể nạp font từ {ttf_path}, sẽ dùng font mặc định.")
-
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    # Đặt font tùy chỉnh ở đây. Đổi tên file font nếu cần.
-    setup_custom_font(app, ttf_path="font-pro.ttf", font_size=12)
     window = SystemInfoApp()
     window.show()
     sys.exit(app.exec())
